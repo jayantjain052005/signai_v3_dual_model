@@ -1,0 +1,269 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>SignAI — Dual Model Sign Language Detector</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Syne:wght@400;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/static/css/style.css">
+</head>
+<body class="dark">
+
+<!-- ══════════════════════════════════════ NAVBAR -->
+<nav class="navbar">
+  <div class="nav-brand">
+    <div class="brand-glyph">🤟</div>
+    <div>
+      <div class="brand-name">SignAI</div>
+      <div class="brand-tag">Dual Model Detector</div>
+    </div>
+  </div>
+
+  <!-- ── MODE SWITCHER (centre) ── -->
+  <div class="mode-switcher" id="modeSwitcher">
+    <button class="mode-btn active" id="btnModeWords" onclick="switchMode('words')">
+      <span class="mode-icon">🤲</span>
+      <span class="mode-label">Words &amp; Phrases</span>
+      <span class="mode-model">sign_model_2hand</span>
+    </button>
+    <!-- <div class="mode-divider"></div>
+    <button class="mode-btn" id="btnModeAlpha" onclick="switchMode('alpha')">
+      <span class="mode-icon">🔤</span>
+      <span class="mode-label">Alphabet</span>
+      <span class="mode-model">sign_model_alpha</span>
+    </button>
+  </div> -->
+
+  <div class="nav-right">
+    <div class="status-pill" id="statusPill">
+      <span class="s-dot" id="sDot"></span>
+      <span id="sText">Initializing</span>
+    </div>
+    <button class="icon-btn" onclick="toggleDark()" title="Toggle theme">☀</button>
+    <button class="icon-btn" onclick="toggleFullscreen()" title="Fullscreen">⛶</button>
+  </div>
+</nav>
+
+<!-- ══════════════════════════════════════ ERROR BANNERS -->
+{% if words_error %}
+<div class="err-bar">⚠ Words model: {{ words_error }}</div>
+{% endif %}
+{% if alpha_error %}
+<div class="err-bar warn">⚠ Alphabet model: {{ alpha_error }} — place <code>sign_model_alpha.pkl</code> in app folder</div>
+{% endif %}
+
+<!-- ══════════════════════════════════════ LAYOUT -->
+<div class="layout">
+
+  <!-- ─── LEFT: Reference panel ─── -->
+  <aside class="panel-left" id="panelLeft">
+
+    <div class="panel-hdr">
+      <span class="panel-title" id="refTitle">Reference Signs</span>
+      <div class="live-pip" id="livePip">● LIVE</div>
+    </div>
+
+    <div class="search-row">
+      <input id="searchInput" class="search-inp" type="text" placeholder="Search…" autocomplete="off">
+    </div>
+
+    <!-- Currently detected hero -->
+    <div class="hero-card" id="heroCard" style="display:none">
+      <div class="hero-badge">▶ Detected Now</div>
+      <div class="hero-img-wrap">
+        <img id="heroImg" src="" alt="">
+        <div class="hero-overlay">
+          <span class="hero-sign" id="heroSign"></span>
+          <span class="hero-conf" id="heroConf"></span>
+        </div>
+      </div>
+    </div>
+
+    <div class="gallery-label" id="galleryLabel">ALL SIGNS</div>
+
+    <!-- Words gallery -->
+    <div class="gallery" id="galleryWords">
+      {% for cls in words_classes %}
+      <div class="ref-card" data-sign="{{ cls }}" data-mode="words">
+        <div class="ref-img-wrap">
+          <img class="ref-img" src="/api/sign_image/words/{{ cls }}" alt="{{ cls }}"
+               onerror="this.style.display='none';this.nextElementSibling.style.display='flex'">
+          <div class="ref-fallback">{{ cls[0].upper() }}</div>
+          <div class="ref-hover">
+            <button class="speak-btn" onclick="speakSign('{{ cls }}');event.stopPropagation()">🔊</button>
+          </div>
+        </div>
+        <div class="ref-label">{{ cls }}</div>
+      </div>
+      {% endfor %}
+    </div>
+
+    <!-- Alpha gallery -->
+    <div class="gallery gallery-alpha" id="galleryAlpha" style="display:none">
+      {% for cls in alpha_classes %}
+      <div class="ref-card" data-sign="{{ cls }}" data-mode="alpha">
+        <div class="ref-img-wrap">
+          <img class="ref-img" src="/api/sign_image/alpha/{{ cls }}" alt="{{ cls }}"
+               onerror="this.style.display='none';this.nextElementSibling.style.display='flex'">
+          <div class="ref-fallback">{{ cls[0].upper() }}</div>
+          <div class="ref-hover">
+            <button class="speak-btn" onclick="speakSign('{{ cls }}');event.stopPropagation()">🔊</button>
+          </div>
+        </div>
+        <div class="ref-label">{{ cls }}</div>
+      </div>
+      {% endfor %}
+    </div>
+
+    <div class="panel-foot">
+      <span class="model-chip" id="modelChip">🧠 2-Hand</span>
+      <span class="count-chip" id="countChip">{{ words_classes|length }} signs</span>
+    </div>
+  </aside>
+
+  <!-- ─── CENTRE: Camera ─── -->
+  <main class="panel-center">
+
+    <!-- mode indicator strip -->
+    <div class="mode-strip" id="modeStrip">
+      <span class="ms-dot words-dot"></span>
+      <span id="modeStripLabel">WORDS &amp; PHRASES MODE</span>
+      <span class="ms-spacer"></span>
+      <span class="ms-fps" id="camFps">-- FPS</span>
+      <span class="ms-hands">
+        <span class="hand-pip" id="hL">L</span>
+        <span class="hand-pip" id="hR">R</span>
+      </span>
+    </div>
+
+    <div class="cam-shell" id="camShell">
+      <!-- idle state -->
+      <div class="cam-idle" id="camIdle">
+        <div class="idle-emoji">📷</div>
+        <div class="idle-h">Camera Offline</div>
+        <div class="idle-sub">Press Start Camera to begin</div>
+      </div>
+
+      <img id="videoFeed" src="" alt="feed" style="display:none">
+
+      <!-- overlay -->
+      <div class="cam-overlay" id="camOverlay" style="display:none">
+        <!-- centre notice -->
+        <div class="cam-notice" id="camNotice"></div>
+
+        <!-- bottom HUD -->
+        <div class="cam-hud">
+          <div class="hud-left">
+            <div class="hud-sign" id="hudSign">—</div>
+            <div class="hud-sub" id="hudSub">Waiting…</div>
+          </div>
+          <div class="hud-right">
+            <svg class="arc-ring" viewBox="0 0 80 80">
+              <defs>
+                <linearGradient id="arcG" x1="0%" y1="0%" x2="100%" y2="0%">
+                  <stop offset="0%" stop-color="#4d9eff"/>
+                  <stop offset="100%" stop-color="#00d4aa"/>
+                </linearGradient>
+              </defs>
+              <circle cx="40" cy="40" r="32" class="arc-bg"/>
+              <circle cx="40" cy="40" r="32" class="arc-fill" id="arcFill" stroke-dasharray="0 201"/>
+            </svg>
+            <div class="arc-pct" id="arcPct">0%</div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- controls -->
+    <div class="controls">
+      <button class="btn primary" id="btnStart" onclick="startCamera()">▶ Start Camera</button>
+      <button class="btn danger"  id="btnStop"  onclick="stopCamera()"   disabled>■ Stop</button>
+      <button class="btn ghost"   id="btnSnap"  onclick="takeSnapshot()" disabled>📸 Screenshot</button>
+      <button class="btn ghost"   id="btnReset" onclick="resetAll()">↺ Reset</button>
+      <button class="btn voice"   id="btnSpeak" onclick="speakCurrent()">🔊 Speak</button>
+      <label class="toggle-pill">
+        <input type="checkbox" id="chkAutoSpeak" onchange="toggleAutoSpeak(this)">
+        <span class="pill-track"><span class="pill-thumb"></span></span>
+        <span class="pill-lbl">Auto</span>
+      </label>
+    </div>
+
+    <!-- sentence builder -->
+    <div class="sentence-panel">
+      <div class="sentence-hdr">
+        <span class="sentence-title">📝 Sentence Builder</span>
+        <div class="sentence-actions">
+          <button class="sbtn" onclick="addWord()">＋ Add Word</button>
+          <button class="sbtn" onclick="clearSentence()">✕ Clear</button>
+          <button class="sbtn accent" onclick="speakSentence()">🔊 Speak All</button>
+        </div>
+      </div>
+      <div class="sentence-box" id="sentenceBox">
+        <span class="sentence-placeholder">Detected signs will appear here…</span>
+      </div>
+    </div>
+
+  </main>
+
+  <!-- ─── RIGHT: Stats & history ─── -->
+  <aside class="panel-right">
+
+    <!-- Confidence arc big -->
+    <div class="r-block">
+      <div class="r-title">Confidence</div>
+      <div class="big-arc-wrap">
+        <svg class="big-arc" viewBox="0 0 140 140">
+          <defs>
+            <linearGradient id="bigG" x1="0%" y1="0%" x2="100%" y2="0%">
+              <stop offset="0%" stop-color="#4d9eff"/>
+              <stop offset="100%" stop-color="#00d4aa"/>
+            </linearGradient>
+          </defs>
+          <circle cx="70" cy="70" r="56" class="big-arc-bg"/>
+          <circle cx="70" cy="70" r="56" class="big-arc-fill" id="bigArcFill" stroke-dasharray="0 352"/>
+        </svg>
+        <div class="big-arc-text">
+          <div class="big-pct" id="bigPct">0%</div>
+          <div class="big-lbl">confidence</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Toggles -->
+    <div class="r-block">
+      <div class="r-title">Settings</div>
+      <div class="setting-row">
+        <span>🌙 Dark mode</span>
+        <label class="toggle-pill">
+          <input type="checkbox" id="chkDark" checked onchange="toggleDark()">
+          <span class="pill-track"><span class="pill-thumb"></span></span>
+        </label>
+      </div>
+    </div>
+
+    <!-- Prediction history -->
+    <div class="r-block r-grow">
+      <div class="r-title">History <span class="hist-badge" id="histBadge">0</span></div>
+      <div class="hist-list" id="histList">
+        <div class="hist-empty">No predictions yet</div>
+      </div>
+    </div>
+
+    <!-- Session stats -->
+    <div class="r-block">
+      <div class="r-title">Session</div>
+      <div class="stats-row">
+        <div class="stat-box"><span class="sv" id="svTotal">0</span><span class="sl">Total</span></div>
+        <div class="stat-box"><span class="sv" id="svAvg">0%</span><span class="sl">Avg Conf</span></div>
+        <div class="stat-box"><span class="sv" id="svTop">—</span><span class="sl">Top Sign</span></div>
+      </div>
+    </div>
+
+  </aside>
+
+</div><!-- /layout -->
+
+<script src="/static/js/main.js"></script>
+</body>
+</html>
